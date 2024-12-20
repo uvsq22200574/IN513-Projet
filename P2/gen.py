@@ -150,7 +150,7 @@ def generate_ordonnance(n):
     Generate lists of drugs. Those prescriptions are unrealistic as they do not take into account laws and needed quantities.
     '''
     today = datetime.today()
-    output = "\nDELETE FROM Ordonnance WHERE ID_ORDO >= 0;\n\n"
+    output = "\nDELETE FROM Achats_Ordonnances WHERE ID_ORDO >= 0;\n\n"
     for client_id in range(n):
         medicaments_ord = set(tuple(med.values()) for med in medicaments)
         med_choisis = set()
@@ -158,7 +158,8 @@ def generate_ordonnance(n):
         date = f"TO_DATE('{fake.date_between(start_date=today - timedelta(days=14), end_date=today).strftime('%Y/%m/%d')}', 'YYYY/MM/DD HH24:MI:SS')"
         for _ in range(randint(1, 5)):  # Une ordonnance/achat contient entre 1 et 5 médicaments
             medicament = choice(list(medicaments_ord - med_choisis))
-            output += f"INSERT INTO Ordonnance (Id_Client, Nom_commercial, RPPS, Posologie, dDate) VALUES ({client_id},'{medicament[1]}',{docteur if medicament[5] == 'True' else 'NULL'},{float(medicament[4]) * randint(2, 5):.2f},{date if medicament[5] == 'True' else 'SYSDATE'});\n"
+            # Si il faut une ordonnance, la date sera définie, sinon l'achat est sur place
+            output += f"INSERT INTO Achats_Ordonnances (Id_Client, Nom_commercial, RPPS, Posologie, dDate) VALUES ({client_id},'{medicament[1]}',{docteur if medicament[5] == 'True' else 'NULL'},{float(medicament[4]) * randint(2, 5):.2f},{date if medicament[5] == 'True' else 'SYSDATE'});\n"
             med_choisis.add(medicament)
     return output
 

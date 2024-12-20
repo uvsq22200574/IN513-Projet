@@ -56,9 +56,10 @@ CREATE TABLE Achats_Ordonnances (
     ID_Ordo NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     Nom_commercial VARCHAR2(128) NOT NULL,
     RPPS VARCHAR2(11),
+    ID_Client NUMBER NOT NULL,
     Posologie NUMBER(6, 2) CHECK (Posologie > 0),
     dDate DATE,
-    ID_Client NUMBER NOT NULL,
+    Paye VARCHAR2(5) DEFAULT 'False' CHECK (Paye IN ('False', 'True')),
     FOREIGN KEY (Nom_commercial) REFERENCES Medicament(Nom_Commercial),
     FOREIGN KEY (RPPS) REFERENCES Medecin(RPPS),
     FOREIGN KEY (ID_Client) REFERENCES Client(ID),
@@ -81,41 +82,34 @@ ALTER SESSION SET TIME_ZONE = 'Europe/Paris';
 
 -- Triggers (au moins 6)
 
--- Il faut un trigger qui créer une ligne sur la table PAIEMENT quand on ajoute une ordonnance
--- Il faut créer un trigger qui empêche l'ajout d'une transaction si le médicament n'est plus en stock
-
-
--- Créer / vérifier une requête qui vérifie qu'un médicament est
-
 -- Trigger 1
 -- Ce trigger permet de s'assurer que les numéros de sécurité sociale généré soit corrects
 -- On vérifie d'abord la longueur, puis les caratères, puis la date puis la clé
 CREATE OR REPLACE TRIGGER validate_securite_sociale
 BEFORE INSERT OR UPDATE ON Client FOR EACH ROW
-
 DECLARE
-    numeric_part CHAR(13);  -- To extract the first 13 digits
-    check_digits CHAR(2);   -- To extract the last 2 digits
-    date_digits CHAR(4);    -- To extract the date from the SS number
-    birth_date CHAR(4);	-- To extract the date from the field
-    calculated_check NUMBER; -- The result of the formula calculation
+    numeric_part CHAR(13);  -- Pour obtenir les 13 premiers chiffres
+    check_digits CHAR(2);   -- Pour obtenir la clé de vérification
+    date_digits CHAR(4);    -- Pour obtenir la date
+    birth_date CHAR(4);	    -- Pour obtenir la date
+    calculated_check NUMBER; -- Le résultat du calcul de la clé de vérification
 BEGIN
-    -- Continue only if the lenght is correct
+    -- Vérification de la longueur
     IF LENGTH(:NEW.Securite_Sociale) != 15 THEN
         RAISE_APPLICATION_ERROR(-20001, 'Le numéro de Sécurité Sociale doit être long de 15 caractères.');
     END IF;
-    -- Ensure the numeric part is valid (contains only digits)
+    -- Vérification de la présence de chiffres seulement
     numeric_part := SUBSTR(:NEW.Securite_Sociale, 1, 13);
     IF NOT REGEXP_LIKE(numeric_part, '^[0-9]+$') THEN
         RAISE_APPLICATION_ERROR(-20002, 'Le numéro de Sécurité Sociale doit contenir uniquement des chiffres.');
     END IF;
-    -- Compare the field and the SS number to ensure they match
+    -- Vérification des dates
     date_digits := SUBSTR(:NEW.Securite_Sociale, 2, 4);
     birth_date := TO_CHAR(:NEW.Date_Naissance, 'YYMM');
     IF TO_NUMBER(birth_date) != TO_NUMBER(date_digits) THEN
         RAISE_APPLICATION_ERROR(-20003, 'Le numéro de Sécurité Sociale et la date de naissance ne correspondent pas.');
     END IF;
-    -- Compare the calculated check digits with the provided ones
+    -- Vérification de la clé de controle
     check_digits := TO_NUMBER(SUBSTR(:NEW.Securite_Sociale, 14, 2));
     calculated_check := 97 - MOD(TO_NUMBER(numeric_part), 97);
     IF check_digits != calculated_check THEN
@@ -126,15 +120,15 @@ END;
 
 -- Valide
 INSERT INTO Client VALUES (0,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'), '104073417200192', 'Mutuelle1', 123456);
--- Fail length
+-- Echec longueur
 INSERT INTO Client VALUES (1,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'), '10407341720192', 'Mutuelle1', 123456);
--- Fail char type
+-- Echec type
 INSERT INTO Client VALUES (2,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'), '104072B30500126', 'Mutuelle1', 123456);
--- Fail correlation
+-- Echec date
 INSERT INTO Client VALUES (3,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'), '101073417200145', 'Mutuelle1', 123456);
 INSERT INTO Client VALUES (4,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'), '104017815824749', 'Mutuelle1', 123456);
 INSERT INTO Client VALUES (5,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'), '101017815824702', 'Mutuelle1', 123456);
--- Fail key
+-- Echec clé
 INSERT INTO Client VALUES (0,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'), '104073417200169', 'Mutuelle1', 123456);
 
 -- Trigger 2
@@ -142,7 +136,6 @@ INSERT INTO Client VALUES (0,'Assis', 'Hugo', TO_DATE('2004/07/05', 'YYYY/MM/DD'
 -- Comme par exemple on ne peut pas être livré avant la date de commande
 CREATE OR REPLACE TRIGGER create_commande
 BEFORE INSERT OR UPDATE ON Commande FOR EACH ROW
-
 BEGIN
     -- Vérifier que Date_livraison >= Date_commande
     IF :NEW.Date_commande IS NULL THEN
@@ -161,7 +154,6 @@ BEGIN
     IF :NEW.Date_expiration IS NOT NULL AND :NEW.Date_expiration < :NEW.Date_commande THEN
     RAISE_APPLICATION_ERROR(-20008, 'La commande doit expirer après la date de commande.');
     END IF;
-
 END;
 /
 
@@ -282,12 +274,7 @@ END;
 
 
 -- trigger 8
-/*
-Puisque sans ID d'ordonnance on ne peut pas vendre de médicaments qui en requiert,
-il n'est pas nécessaire de vérifier cela.
-
-- MODIFIER GRAPHE POUR INCLURE UNE FLECHE BASE A CLIENT.
-*/
+-- Puisque sans ID d'ordonnance on ne peut pas vendre de médicaments qui en requiert, il n'est pas nécessaire de vérifier cela.
 
 CREATE OR REPLACE TRIGGER process_paiement
 BEFORE INSERT ON Paiement FOR EACH ROW
@@ -321,10 +308,14 @@ BEGIN
     END IF;
 
     -- Pour chaque médicament de l'ordonnance
-    FOR ordo IN (SELECT Nom_Commercial, Posologie, dDate FROM Achats_Ordonnances WHERE :NEW.ID_Client = Achats_Ordonnances.ID_Client) LOOP
+    FOR ordo IN (SELECT ID_Ordo, Nom_Commercial, Posologie, dDate FROM Achats_Ordonnances WHERE :NEW.ID_Client = Achats_Ordonnances.ID_Client AND Paye = 'False') LOOP
         -- Vérification de la date de l'ordonnance
         IF SYSDATE - ordo.dDate >= 14 THEN
-            RAISE_APPLICATION_ERROR(-20014, 'L''ordonnance est expirée.');
+            RAISE_APPLICATION_ERROR(-20011, 'L''ordonnance est expirée.');
+            -- Vider les messages précédents
+            DBMS_OUTPUT.DISABLE;
+            DBMS_OUTPUT.ENABLE;
+            RAISE;
         END IF;
 
         -- Calcul du prix et des quantités demandées
@@ -332,10 +323,11 @@ BEGIN
         SELECT Prix * quantite_per_med INTO price FROM Medicament WHERE Nom_Commercial = ordo.Nom_Commercial;
         SELECT Quantite, Taux_remboursement INTO quantite_meds, taux_remboursement FROM Medicament WHERE ordo.Nom_Commercial = Nom_Commercial;
         
-        IF quantite_meds - quantite_per_med > 0 THEN
+        IF quantite_meds - quantite_per_med >= 0 THEN
             DBMS_OUTPUT.PUT_LINE('Le client à demandé ' || quantite_per_med || ' boites de '|| ordo.Nom_Commercial ||', ce qui fait ' || price ||'€.');
             -- Mise à jour des stocks
             UPDATE Medicament SET Quantite = Quantite - quantite_per_med WHERE ordo.Nom_Commercial = Nom_Commercial;
+            UPDATE Achats_Ordonnances SET Paye = 'True' WHERE ordo.ID_Ordo = ID_Ordo;
             total_price := total_price + price;
             IF securite_Sociale IS NOT NULL AND mutuelle IS NOT NULL THEN
                 total_price_client := 0;
@@ -540,69 +532,77 @@ INSERT INTO Comm_Med (ID, CIP, ID_Commande, Quantite, Prix_HT_UNIT) VALUES (2, '
 
 INSERT INTO Comm_Med (ID, CIP, ID_Commande, Quantite, Prix_HT_UNIT) VALUES (3, '3400932858999', 4, 3, 30);
 
+INSERT INTO Paiement (ID_Client, dDate) VALUES (4, SYSDATE);
+INSERT INTO Paiement (ID_Client, dDate) VALUES (8, SYSDATE);
+INSERT INTO Paiement (ID_Client, dDate) VALUES (9, SYSDATE);
+INSERT INTO Paiement (ID_Client, dDate) VALUES (12, SYSDATE);
+INSERT INTO Paiement (ID_Client, dDate) VALUES (16, SYSDATE);
+INSERT INTO Paiement (ID_Client, dDate) VALUES (20, SYSDATE);
+INSERT INTO Paiement (ID_Client, dDate) VALUES (8, SYSDATE);
+-- On ajoute encore une fois le client 8 car cela créera un autre achat, de valeur 0.
+
 
 -- REQUETES SQL
--- #1. Quelles sont les 5 dernières transactions ?
+-- #01. Ajouter un paiement et mettre à jour les tables
+INSERT INTO Paiement (ID_Client, dDate) VALUES (0, SYSDATE);
+-- Va générer une erreur car l'ordonnance associée est expirée
+INSERT INTO Paiement (ID_Client, dDate) VALUES (11, SYSDATE);
+SELECT * FROM Structure;
+-- #02. Quelles sont les 5 dernières transactions ?
 SELECT * FROM Paiement ORDER BY dDate DESC FETCH FIRST 5 ROWS ONLY;
--- #2. Quel est le médicament le moins cher et qui est en stock ?
+-- #03. Quel est le médicament le moins cher et qui est en stock ?
 SELECT Nom_Commercial, Quantite, Prix FROM Medicament WHERE Quantite > 0 ORDER BY Prix ASC FETCH FIRST 1 ROWS ONLY;
--- #3. Quels sont les médicaments les plus/moins en stock ?
+-- #04. Quels sont les médicaments les plus/moins en stock ?
 SELECT Nom_Commercial, Quantite FROM Medicament ORDER BY Quantite ASC;
--- #4. Quel est le chiffre d’affaires du mois/entre deux dates?
-SELECT SUM(Budget) AS Chiffre_Affaire_Mois FROM Structure WHERE TRUNC(dDate, 'MM') = TRUNC(SYSDATE, 'MM');
-SELECT SUM(Budget) AS Chiffre_Affaire FROM Structure WHERE dDate BETWEEN TO_DATE('2024/01/01', 'YYYY/MM/DD') AND TO_DATE('2024/12/31', 'YYYY/MM/DD');
--- #5. Quel livraisons sont en attente (commandé mais pas livré) ?
-SELECT * FROM Commande WHERE Date_livraison IS NULL;
--- #6. Quel client à effectuer le plus d’achat sur l’année et pour quel montant ?
+-- #05. Quel client à effectuer le plus d’achat sur l’année et pour quel montant ?
 SELECT ID_Client, COUNT(*) AS Nombre_Achats FROM Paiement 
 WHERE EXTRACT(YEAR FROM dDate) = 2024
 GROUP BY ID_Client ORDER BY Nombre_Achats DESC FETCH FIRST 1 ROWS ONLY;
-
+-- #06. Quel client à dépenser le plus sur l'année et pour quel montant ?
 SELECT ID_Client, SUM(Prix) AS Total_Achats FROM Paiement
 WHERE EXTRACT(YEAR FROM dDate) = 2024
 GROUP BY ID_Client ORDER BY Total_Achats DESC FETCH FIRST 1 ROWS ONLY;
--- #7. Quels médicaments ont été commandés mais pas encore livré ?
-
--- #8. 
-
--- #9. Quel est le médicament le plus vendu aujourd’hui et quel est les bénéfices net (revenu − coût total) ?
-
--- #10. Quels sont les médicaments les plus/moins bien remboursés par la SS ?
-
--- #11. Quel est l’historique des achats d’un client spécifique ?
-
--- #12. Quels sont les lots de médicaments expirés à retirer ?
+-- #07. Quel est le chiffre d’affaires du mois/entre deux dates?
+SELECT SUM(Budget) AS Chiffre_Affaire_Mois FROM Structure WHERE TRUNC(dDate, 'MM') = TRUNC(SYSDATE, 'MM');
+SELECT SUM(Budget) AS Chiffre_Affaire FROM Structure WHERE dDate BETWEEN TO_DATE('2024/01/01', 'YYYY/MM/DD') AND TO_DATE('2024/12/31', 'YYYY/MM/DD');
+-- #08. Quel livraisons sont en attente (commandé mais pas livré) ?
+SELECT * FROM Commande WHERE Date_livraison IS NULL;
+-- #09. Quels sont les lots de médicaments expirés à retirer ?
 SELECT ID, Date_expiration, Lot FROM Commande WHERE Date_expiration <= SYSTIMESTAMP;
-
--- #13. Quelle est la liste de toutes les ordonnances délivrées par un médecin spécifique ?
+-- #10. Quelle est la liste de toutes les ordonnances délivrées par un médecin spécifique ?
 SELECT * FROM Achats_Ordonnances WHERE RPPS = 86750317269;
 SELECT * FROM Achats_Ordonnances WHERE RPPS = 83625354668;
-
--- #14 Tous les médicaments d'une commande
-SELECT * FROM Comm_Med WHERE ID_COMMANDE = 0;
-
--- #15
--- En mettant à jour la commande en définissant la date de livraison, la date d'expiration est définie et le stock est mis à jour
+-- #11. Quels médicaments ont été commandés dans une commande spécifique ?
+SELECT * FROM Comm_Med WHERE ID_COMMANDE = 3;
+-- #12. Mettre à jour la commande en définissant la date de livraison, la date d'expiration est définie et le stock est mis à jour
 UPDATE Commande SET Date_livraison = SYSTIMESTAMP WHERE Commande.ID = 3;
 SELECT * FROM Structure
-
--- #16
--- Quel est le prix d'une commande?
+-- #13. Quel est le prix d'une commande ?
 SELECT SUM(QUANTITE * PRIX_HT_UNIT) AS Prix_Total FROM Comm_Med WHERE ID_COMMANDE = 3;
-
--- #17
--- Quel est le prix total (hors ss et mutuelle) d'une ordonnance?
+-- #14. Quel est le prix total (hors ss et mutuelle) d'une ordonnance?
 SELECT ao.ID_Client, SUM(m.Prix * ao.Posologie / m.Posologie) AS total_price FROM Achats_Ordonnances ao
 JOIN Medicament m ON ao.Nom_commercial = m.Nom_Commercial
-WHERE ao.ID_Client = 11
 GROUP BY ao.ID_Client;
--- #18
--- Ajouter un paiement et mettre à jour les tables
-INSERT INTO Paiement (ID_Client, dDate) VALUES (0, SYSDATE);
-SELECT * FROM Structure; -- Pour voir l'augmentation du budget
+-- #15. Quels médicaments ont été commandés mais pas encore livré ?
+SELECT ID_Commande, Nom_Commercial FROM Comm_Med JOIN Commande ON Comm_Med.ID_Commande = Commande.ID JOIN Medicament ON Comm_med.CIP = Medicament.CIP WHERE Commande.Date_livraison IS NULL;
+-- #16. Qui sont les clients qui ont une sécurité sociale mais pas de mutuelle ?
+SELECT ID, Nom, Prenom, Date_Naissance FROM Client WHERE Securite_Sociale IS NOT NULL AND Mutuelle IS NULL;
+-- #17. Quels sont les médicaments les plus/moins bien remboursés par la SS ?
+SELECT CIP, Nom_Commercial, Taux_remboursement FROM Medicament ORDER BY Taux_remboursement;
+-- #18. Quel est l’historique des achats d’un client spécifique ?
+SELECT dDate, ID_Client, Prix FROM Paiement WHERE ID_Client = 8 ORDER BY dDATE;
+-- #19. Combien un client dépense en moyenne ?
+SELECT ROUND(AVG(m.Prix * ao.Posologie / m.Posologie), 2) AS Depense_moyenne_clients FROM Achats_Ordonnances ao
+JOIN Medicament m ON ao.Nom_commercial = m.Nom_Commercial;
+-- #20. Qui sont les clients qui ont dépenser plus que la moyenne ?
+SELECT c.ID, c.Nom, c.Prenom, ROUND(SUM(m.Prix * ao.Posologie / m.Posologie), 2) AS Depense_totale FROM Client c
+JOIN Achats_Ordonnances ao ON c.ID = ao.ID_Client
+JOIN Medicament m ON ao.Nom_Commercial = m.Nom_Commercial
+GROUP BY c.ID, c.Nom, c.Prenom
+HAVING SUM(m.Prix * ao.Posologie / m.Posologie) >
+(SELECT AVG(m.Prix * ao.Posologie / m.Posologie) FROM Achats_Ordonnances ao JOIN Medicament m ON ao.Nom_commercial = m.Nom_Commercial);
 
-INSERT INTO Paiement (ID_Client, dDate) VALUES (11, SYSDATE);
-SELECT * FROM Structure; -- Pour voir l'augmentation du budget
+
 
 -- Meta-Données
 -- Contraintes d'integrité
